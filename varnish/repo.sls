@@ -1,4 +1,4 @@
 varnish_repo:
   cmd.run:
-    - name: rpm --nosignature -i https://repo.varnish-cache.org/redhat/varnish-3.0.el6.rpm
+    - name: curl -Ss 'https://packagecloud.io/install/repositories/varnishcache/varnish30/config_file.repo?os=centos&dist=6&source=script' > /etc/yum.repos.d/varnish.repo
     - creates: /etc/yum.repos.d/varnish.repo

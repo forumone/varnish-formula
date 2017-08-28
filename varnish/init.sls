@@ -7,7 +7,7 @@ set-varnish-role:
 varnish:
   pkg:
     - installed
-    - enablerepo: varnish-3.0
+    - enablerepo: varnishcache_varnish30
   service:
     - enable: True
     - running
