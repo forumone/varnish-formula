@@ -37,17 +37,6 @@ sub vcl_recv {
     }
   }
 
-  # Forced Auth for Stage Sites
-  if ( !client.ip ~ internal ) {
-    if ( req.http.Host ~ "stage.forumone.com" ) {
-      if ( !req.http.Authorization ~ "Basic Zm9ydW1vbmU6ZjFkZXY=" 
-        && !req.http.Authorization ~ "Basic ZjFkZXY6bmV3X2Yxc2l0ZQ=="
-        ) {
-              error 401 "Restricted";
-      }
-    }
-  }
-
   # Allow the backend to serve up stale content if it is responding slowly.
   if (!req.backend.healthy) {
     # Use anonymous, cached pages if all backends are down.
