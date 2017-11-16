@@ -7,4 +7,4 @@ disable_varnish_repo_default:
   cmd.run:
     - name: yum-config-manager --disable varnishcache_varnish30 varnishcache_varnish30-source
     - onchanges:
-        - cmd: varnish_repo
+      - cmd: varnish_repo
