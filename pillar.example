@@ -1,0 +1,6 @@
+# Varnish settings
+varnish:
+  # Use varnish 4.1.x
+  version: 41
+  # Point to a custom vcl path (must be accessible to saltmaster as a file root)
+  vcl: salt://salt_templates/varnish
