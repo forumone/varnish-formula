@@ -1,3 +1,4 @@
+vcl 4.0;
 #probe healthcheck {
 #  .request =
 #    "GET / HTTP/1.1"
@@ -28,11 +29,11 @@ backend web1 {
 #  .probe = healthcheck;
 #}
 
-director default round-robin {
-  {
-    .backend = web1;
-  }
+#director default round-robin {
+#  {
+#    .backend = web1;
+#  }
 #  {
 #    .backend = web2;
 #  }
-}
+#}

@@ -1,3 +1,5 @@
+vcl 4.0;
+import std;
 # This is a basic VCL configuration file for varnish.  See the vcl(7)
 # man page for details on VCL syntax and semantics.
 # 
@@ -10,8 +12,8 @@ include "backends.vcl";
 
 # Respond to incoming requests.
 sub vcl_recv {
-  if (req.request == "GET" && req.url ~ "^/varnishcheck$") {
-    error 200 "Varnish is Ready";
+  if (req.method == "GET" && req.url ~ "^/varnishcheck$") {
+    return (synth(200, "Varnish is Ready"));
   }
 
   # https://forumone.zendesk.com/agent/tickets/6219
@@ -20,11 +22,11 @@ sub vcl_recv {
   }
 
   # Allow PURGE from localhost and 192.168.0.0/24
-  if (req.request == "PURGE") {
+  if (req.method == "PURGE") {
     if (!client.ip ~ purge) {
-      error 405 "Not allowed.";
+      return (synth(405, "Not allowed."));
     }
-    return (lookup);
+    return (hash);
   }
 
   ## From default below ##
@@ -38,15 +40,21 @@ sub vcl_recv {
   }
 
   # Allow the backend to serve up stale content if it is responding slowly.
-  if (!req.backend.healthy) {
+  if (!std.healthy(req.backend_hint)) {
     # Use anonymous, cached pages if all backends are down.
     unset req.http.Cookie;
     if (req.http.X-Forwarded-Proto == "https") {
       set req.http.X-Forwarded-Proto = "http";
     }
-    set req.grace = 30m;
+    #
+    # This is now handled in vcl_hit.
+    #
+    # set req.grace = 30m;
   } else {
-    set req.grace = 15s;
+    #
+    # This is now handled in vcl_hit.
+    #
+    # set req.grace = 15s;
   }
 
 
@@ -58,7 +66,7 @@ sub vcl_recv {
   # If global redirect is on
   #if (req.url ~ "node\?page=[0-9]+$") {
   #  set req.url = regsub(req.url, "node(\?page=[0-9]+$)", "\1");
-  #  return (lookup);
+  #  return (hash);
   #}
 
   # Do not cache these paths.
@@ -85,7 +93,7 @@ sub vcl_recv {
   # Do not allow outside access to cron.php or install.php.
   if (req.url ~ "^/(cron|install)\.php$" && !client.ip ~ internal) {
     # Have Varnish throw the error directly.
-    error 404 "Page not found.";
+    return (synth(404, "Page not found."));
     # Use a custom error page that you've defined in Drupal at the path "404".
     # set req.url = "/404";
   }
@@ -148,17 +156,17 @@ sub vcl_recv {
       return (pass);
     }
   }
-  if (req.request != "GET" &&
-    req.request != "HEAD" &&
-    req.request != "PUT" &&
-    req.request != "POST" &&
-    req.request != "TRACE" &&
-    req.request != "OPTIONS" &&
-    req.request != "DELETE") {
+  if (req.method != "GET" &&
+    req.method != "HEAD" &&
+    req.method != "PUT" &&
+    req.method != "POST" &&
+    req.method != "TRACE" &&
+    req.method != "OPTIONS" &&
+    req.method != "DELETE") {
       /* Non-RFC2616 or CONNECT which is weird. */
       return (pipe);
   }
-  if (req.request != "GET" && req.request != "HEAD") {
+  if (req.method != "GET" && req.method != "HEAD") {
       /* We only deal with GET and HEAD by default */
       return (pass);
   }
@@ -170,7 +178,7 @@ sub vcl_recv {
       /* Not cacheable by default */
       return (pass);
   }
-  return (lookup);
+  return (hash);
 }
 
 sub vcl_pipe {
@@ -190,23 +198,23 @@ sub vcl_hash {
 }
 
 sub vcl_hit {
-  if (req.request == "PURGE") {
+  if (req.method == "PURGE") {
     ban("obj.http.X-Varnish-Tag ~ (?i)" + regsub(req.url, "^\/", "") + " && req.http.host ~ " + req.http.host);
-    error 200 "Purged.";
+    return (synth(200, "Purged."));
   }
 }
 
 sub vcl_miss {
-  if (req.request == "PURGE") {
+  if (req.method == "PURGE") {
     ban("obj.http.X-Varnish-Tag ~ (?i)" + regsub(req.url, "^\/", "") + " && req.http.host ~ " + req.http.host);
-    error 200 "Purged.";
+    return (synth(200, "Purged."));
   }
 }
 
 # Code determining what to do when serving items from the Apache servers.
-sub vcl_fetch {
+sub vcl_backend_response {
   # Don't allow static files to set cookies.
-  if (req.url ~ "(?i)\.(png|gif|jpeg|jpg|ico|swf|css|js)(\?[a-z0-9]+)?$") {
+  if (bereq.url ~ "(?i)\.(png|gif|jpeg|jpg|ico|swf|css|js)(\?[a-z0-9]+)?$") {
     # beresp == Back-end response from the web server.
     unset beresp.http.set-cookie;
   }
@@ -222,7 +230,7 @@ sub vcl_fetch {
   ## Doesn't seem to work as expected
   #if (beresp.status == 500) {
   #  set beresp.saintmode = 10s;
-  #  return(restart);
+  #  return (retry);
   #}
 
   # Allow items to be stale if needed.
@@ -240,12 +248,12 @@ sub vcl_deliver {
 }
 
 # In the event of an error, show friendlier messages.
-sub vcl_error {
+sub vcl_backend_error {
 # Throw 401 for unauth requests
-   if (obj.status == 401) {
-     set obj.http.Content-Type = "text/html; charset=utf-8";
-     set obj.http.WWW-Authenticate = "Basic realm=Secured";
-     synthetic {"
+   if (beresp.status == 401) {
+     set beresp.http.Content-Type = "text/html; charset=utf-8";
+     set beresp.http.WWW-Authenticate = "Basic realm=Secured";
+     synthetic({"
 
   <!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN"
   "http://www.w3.org/TR/1999/REC-html401-19991224/loose.dtd">
@@ -257,31 +265,80 @@ sub vcl_error {
    </HEAD>
     <BODY><H1>401 Unauthorized (varnish)</H1></BODY>
    </HTML>
-  "};
+  "});
  return (deliver);
 }
 
 
-     set obj.http.Content-Type = "text/html; charset=utf-8";
-     set obj.http.Retry-After = "5";
-     synthetic {"
+     set beresp.http.Content-Type = "text/html; charset=utf-8";
+     set beresp.http.Retry-After = "5";
+     synthetic({"
 <?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
   "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 <html>
    <head>
-     <title>"} + obj.status + " " + obj.response + {"</title>
+     <title>"} + beresp.status + " " + beresp.reason + {"</title>
    </head>
    <body>
-     <h1>Error "} + obj.status + " " + obj.response + {"</h1>
-     <p>"} + obj.response + {"</p>
+     <h1>Error "} + beresp.status + " " + beresp.reason + {"</h1>
+     <p>"} + beresp.reason + {"</p>
+     <h3>Guru Meditation:</h3>
+     <p>XID: "} + bereq.xid + {"</p>
+     <hr>
+     <p>Varnish cache server</p>
+   </body>
+</html>
+"});
+     return (deliver);
+}
+
+# 
+# Below is a commented-out copy of the default VCL logic.  If you
+# redefine any of these subroutines, the built-in logic will be
+# appended to your code.
+sub vcl_synth {
+# Throw 401 for unauth requests
+   if (resp.status == 401) {
+     set resp.http.Content-Type = "text/html; charset=utf-8";
+     set resp.http.WWW-Authenticate = "Basic realm=Secured";
+     synthetic({"
+
+  <!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN"
+  "http://www.w3.org/TR/1999/REC-html401-19991224/loose.dtd">
+
+   <HTML>
+   <HEAD>
+   <TITLE>Error</TITLE>
+   <META HTTP-EQUIV='Content-Type' CONTENT='text/html;'>
+   </HEAD>
+    <BODY><H1>401 Unauthorized (varnish)</H1></BODY>
+   </HTML>
+  "});
+ return (deliver);
+}
+
+
+     set resp.http.Content-Type = "text/html; charset=utf-8";
+     set resp.http.Retry-After = "5";
+     synthetic({"
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html>
+   <head>
+     <title>"} + resp.status + " " + resp.reason + {"</title>
+   </head>
+   <body>
+     <h1>Error "} + resp.status + " " + resp.reason + {"</h1>
+     <p>"} + resp.reason + {"</p>
      <h3>Guru Meditation:</h3>
      <p>XID: "} + req.xid + {"</p>
      <hr>
      <p>Varnish cache server</p>
    </body>
 </html>
-"};
+"});
      return (deliver);
 }
 
@@ -298,17 +355,17 @@ sub vcl_error {
 #       set req.http.X-Forwarded-For = client.ip;
 #   }
 #     }
-#     if (req.request != "GET" &&
-#       req.request != "HEAD" &&
-#       req.request != "PUT" &&
-#       req.request != "POST" &&
-#       req.request != "TRACE" &&
-#       req.request != "OPTIONS" &&
-#       req.request != "DELETE") {
+#     if (req.method != "GET" &&
+#       req.method != "HEAD" &&
+#       req.method != "PUT" &&
+#       req.method != "POST" &&
+#       req.method != "TRACE" &&
+#       req.method != "OPTIONS" &&
+#       req.method != "DELETE") {
 #         /* Non-RFC2616 or CONNECT which is weird. */
 #         return (pipe);
 #     }
-#     if (req.request != "GET" && req.request != "HEAD") {
+#     if (req.method != "GET" && req.method != "HEAD") {
 #         /* We only deal with GET and HEAD by default */
 #         return (pass);
 #     }
@@ -316,7 +373,7 @@ sub vcl_error {
 #         /* Not cacheable by default */
 #         return (pass);
 #     }
-#     return (lookup);
+#     return (hash);
 # }
 # 
 # sub vcl_pipe {
@@ -330,7 +387,7 @@ sub vcl_error {
 # }
 # 
 # sub vcl_pass {
-#     return (pass);
+#     return (fetch);
 # }
 # 
 # sub vcl_hash {
@@ -340,7 +397,7 @@ sub vcl_error {
 #     } else {
 #         hash_data(server.ip);
 #     }
-#     return (hash);
+#     return (lookup);
 # }
 # 
 # sub vcl_hit {
@@ -351,7 +408,7 @@ sub vcl_error {
 #     return (fetch);
 # }
 # 
-# sub vcl_fetch {
+# sub vcl_backend_response {
 #     if (beresp.ttl <= 0s ||
 #         beresp.http.Set-Cookie ||
 #         beresp.http.Vary == "*") {
@@ -359,7 +416,9 @@ sub vcl_error {
 #      * Mark as "Hit-For-Pass" for the next 2 minutes
 #      */
 #     set beresp.ttl = 120 s;
-#     return (hit_for_pass);
+#     # set beresp.ttl = 120s;
+#     set beresp.uncacheable = true;
+#     return (deliver);
 #     }
 #     return (deliver);
 # }
@@ -368,20 +427,44 @@ sub vcl_error {
 #     return (deliver);
 # }
 # 
-# sub vcl_error {
-#     set obj.http.Content-Type = "text/html; charset=utf-8";
-#     set obj.http.Retry-After = "5";
+# sub vcl_backend_error {
+#     set beresp.http.Content-Type = "text/html; charset=utf-8";
+#     set beresp.http.Retry-After = "5";
 #     synthetic {"
 # <?xml version="1.0" encoding="utf-8"?>
 # <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
 #  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
 # <html>
 #   <head>
-#     <title>"} + obj.status + " " + obj.response + {"</title>
+#     <title>"} + beresp.status + " " + beresp.reason + {"</title>
 #   </head>
 #   <body>
-#     <h1>Error "} + obj.status + " " + obj.response + {"</h1>
-#     <p>"} + obj.response + {"</p>
+#     <h1>Error "} + beresp.status + " " + beresp.reason + {"</h1>
+#     <p>"} + beresp.reason + {"</p>
+#     <h3>Guru Meditation:</h3>
+#     <p>XID: "} + bereq.xid + {"</p>
+#     <hr>
+#     <p>Varnish cache server</p>
+#   </body>
+# </html>
+# "};
+#     return (deliver);
+# }
+# 
+#sub vcl_synth {
+#     set resp.http.Content-Type = "text/html; charset=utf-8";
+#     set resp.http.Retry-After = "5";
+#     synthetic {"
+# <?xml version="1.0" encoding="utf-8"?>
+# <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+#  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+# <html>
+#   <head>
+#     <title>"} + resp.status + " " + resp.reason + {"</title>
+#   </head>
+#   <body>
+#     <h1>Error "} + resp.status + " " + resp.reason + {"</h1>
+#     <p>"} + resp.reason + {"</p>
 #     <h3>Guru Meditation:</h3>
 #     <p>XID: "} + req.xid + {"</p>
 #     <hr>
