@@ -4,19 +4,28 @@ set-varnish-role:
     - name: roles
     - value: varnish
 
+{% set varnish_version = salt['pillar.get']('varnish:version', '30') %}
 varnish:
   pkg:
     - installed
-    - enablerepo: varnishcache_varnish30
+    - enablerepo: varnishcache_varnish{{varnish_version}}
   service:
     - enable: True
     - running
     - watch:
       - file: /etc/varnish
 
+# Version 4 uses new syntax, so we switch default templates on that.
+{% if '4' in varnish_version|string  %}
+{% set template_dir = 'salt://varnish/files-v4' %}
+{% else %}
+{% set template_dir = 'salt://varnish/files' %}
+{% endif %}
+
 /etc/varnish:
   file.recurse:
-    - source: {{ salt['pillar.get']('varnish:vcl', 'salt://varnish/files') }}
+    # Custom VCL always overrides default templates
+    - source: {{ salt['pillar.get']('varnish:vcl', template_dir ) }}
     - user: root
 
 /etc/sysconfig/varnish:
@@ -26,6 +35,7 @@ varnish:
     - watch_in:
       - service: varnish
     - context:
+        varnish_version: '{{ varnish_version }}'
         port: {{ salt['pillar.get']('varnish:port', '80') }}
         memory: {{ salt['pillar.get']('varnish:memory', '500M') }}
 
